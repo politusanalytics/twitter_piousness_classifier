@@ -11,46 +11,15 @@ import json
 import sys
 # import pandas as pd
 
-# INPUTS
-pretrained_transformers_model = sys.argv[1] # For example: "xlm-roberta-base"
+repo_path = "/home/username/twitter_piousness_classification"
+train_filename = repo_path + "/data/20220528_data/20220528_20211101_self_contained_tweets_pious_adj_train.json"
+test_filename = repo_path + "/data/20220528_data/20220528_20211101_self_contained_tweets_pious_adj_test.json"
+
+pretrained_transformers_model = sys.argv[1]
 seed = int(sys.argv[2])
-max_seq_length = int(sys.argv[3]) # max length of a document (in tokens)
-batch_size = int(sys.argv[4])
-dev_ratio = float(sys.argv[5])
 
-# MUST SET THESE VALUES
-repo_path = "/path/to/this/repo"
-train_filename = repo_path + "/data/train_examples.json" # sys.argv[1]
-test_filename = repo_path + "/data/test_examples.json"
-# test_filename = repo_path + "/data/examples_to_be_predicted.json"
-label_list = ["category1", "category2", "category3"]
-only_test = False # Only perform testing
-predict = False # Predict instead of testing
-has_token_type_ids = False
-
-# SETTINGS
-learning_rate = 2e-5
-dev_metric = "f1_macro"
-num_epochs = 30
-dev_set_splitting = "random" # random, or any filename
 use_gpu = True
-device_ids = [0, 1, 2, 3, 4, 5, 6, 7] # if not multi-gpu then pass a single number such as [0]
-positive_threshold = 0.5 # Outputted probabilities bigger than this number is considered positive in case of binary classifications
-return_probabilities = False # whether or not to return probabilities instead of labels when predicting
-model_path = "{}_{}_{}_{:.2f}_{}.pt".format(pretrained_transformers_model.replace("/", "_"), max_seq_length, batch_size, dev_ratio, seed)
-
-# optional, used in testing
-classifier_path = ""# repo_path + "/models/best_models/20220528_classifier_sentence-transformers_paraphrase-xlm-r-multilingual-v1_44.pt"
-encoder_path = ""#repo_path + "/models/best_models/20220528_encoder_sentence-transformers_paraphrase-xlm-r-multilingual-v1_44.pt"
-
-if not classifier_path:
-    classifier_path =  repo_path + "/models/classifier_" + model_path
-if not encoder_path:
-    encoder_path =  repo_path + "/models/encoder_" + model_path
-
-if return_probabilities:
-    from scipy.special import softmax
-
+device_ids = [4, 5, 6, 7]
 if use_gpu and torch.cuda.is_available():
     device = torch.device("cuda:%d"%(device_ids[0]))
 else:
@@ -62,14 +31,33 @@ torch.manual_seed(seed)
 if device.type == "cuda":
     torch.cuda.manual_seed_all(seed)
 
-label_to_idx = {}
-idx_to_label = {}
-for (i, label) in enumerate(label_list):
-    label_to_idx[label] = i
-    idx_to_label[i] = label
+max_seq_length = int(sys.argv[3]) # max length of a document # 64
+batch_size = int(sys.argv[4]) # 32
 
+# hidden_size = 512 # size of GRU hidden layer (in the paper they use 128)
+learning_rate = 2e-5
+dev_ratio = 0.1
 tokenizer = None
-criterion = torch.nn.BCEWithLogitsLoss() if len(label_list) == 2 else torch.nn.CrossEntropyLoss(ignore_index=-1)
+label_list = ["0", "1"]
+dev_metric = "f1_macro"
+num_epochs = 30
+# pretrained_transformers_model = "xlm-roberta-base"
+# pretrained_transformers_model = "bert-base-multilingual-uncased"
+# pretrained_transformers_model = "sentence-transformers/paraphrase-xlm-r-multilingual-v1"
+# pretrained_transformers_model = "dbmdz/bert-base-turkish-128k-cased"
+has_token_type_ids = False
+only_test = True
+predict = True
+return_confidence_value = False
+dev_set_splitting = "random" # random, or any filename
+# dev_set_splitting = repo_path + "/data/dev.json" # random, or any filename
+model_path = "{}_{}_{}_{}.pt".format(pretrained_transformers_model.replace("/", "_"), seed, max_seq_length, batch_size)
+# model_path = pretrained_transformers_model.replace("/", "_") + str(max_seq_length) + + + + "_" + str(seed) + ".pt"
+criterion = torch.nn.BCEWithLogitsLoss()
+
+# optional, used in testing
+unique_classifier_path = repo_path + "/models/best_models/20220528_classifier_sentence-transformers_paraphrase-xlm-r-multilingual-v1_44.pt"
+unique_encoder_path = repo_path + "/models/best_models/20220528_encoder_sentence-transformers_paraphrase-xlm-r-multilingual-v1_44.pt"
 
 def test_model(encoder, classifier, dataloader):
     all_preds = []
@@ -86,13 +74,14 @@ def test_model(encoder, classifier, dataloader):
 
         with torch.no_grad():
             out = classifier(embeddings)
+            # tmp_eval_loss = criterion(out.view(-1), label_ids.view(-1))
             tmp_eval_loss = criterion(out, label_ids)
 
         eval_loss += tmp_eval_loss.mean().item()
 
         if len(label_list) == 2:
             curr_preds = torch.sigmoid(out).detach().cpu().numpy().flatten()
-            curr_preds = [int(x >= positive_threshold) for x in curr_preds]
+            curr_preds = [int(x >= 0.5) for x in curr_preds]
             all_preds += curr_preds
         else:
             out = out.detach().cpu().numpy()
@@ -133,19 +122,15 @@ def model_predict(encoder, classifier, dataloader):
 
         if len(label_list) == 2:
             curr_preds = torch.sigmoid(out).detach().cpu().numpy().flatten()
-            if return_probabilities:
+            if return_confidence_value:
                 curr_preds = [round(float(x), 4) for x in curr_preds]
             else:
-                curr_preds = [idx_to_label[int(x >= positive_threshold)] for x in curr_preds]
-            all_preds += curr_preds
+                curr_preds = [int(x >= 0.5) for x in curr_preds]
 
+            all_preds += curr_preds
         else:
             out = out.detach().cpu().numpy()
-            if return_probabilities:
-                curr_preds = [probs for probs in softmax(out, axis=1).tolist()] # a list of lists(of probabilities)
-            else:
-                curr_preds = [idx_to_label[pred] for pred in np.argmax(out, axis=1).tolist()] # a list of labels
-            all_preds += curr_preds
+            all_preds += np.argmax(out, axis=1).tolist()
 
     return all_preds
 
@@ -157,14 +142,14 @@ def build_model(train_examples, dev_examples, pretrained_model, n_epochs=10, cur
     encoder = AutoModel.from_pretrained(pretrained_model)
     classifier = torch.nn.Linear(encoder.config.hidden_size, 1 if len(label_list) == 2 else len(label_list))
 
-    train_dataset = TransformersData(train_examples, label_to_idx, tokenizer, max_seq_length=max_seq_length, has_token_type_ids=has_token_type_ids)
+    train_dataset = TransformersData(train_examples, label_list, tokenizer, max_seq_length=max_seq_length, has_token_type_ids=has_token_type_ids)
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-    dev_dataset = TransformersData(dev_examples, label_to_idx, tokenizer, max_seq_length=max_seq_length, has_token_type_ids=has_token_type_ids)
+    dev_dataset = TransformersData(dev_examples, label_list, tokenizer, max_seq_length=max_seq_length, has_token_type_ids=has_token_type_ids)
     dev_dataloader = DataLoader(dataset=dev_dataset, batch_size=batch_size)
 
 
     classifier.to(device)
-    if torch.cuda.device_count() > 1 and device.type == "cuda" and len(device_ids) > 1:
+    if torch.cuda.device_count() > 1 and device.type == "cuda":
         encoder = torch.nn.DataParallel(encoder, device_ids=device_ids)
     encoder.to(device)
 
@@ -194,7 +179,7 @@ def build_model(train_examples, dev_examples, pretrained_model, n_epochs=10, cur
                 embeddings = encoder(input_ids, attention_mask=input_mask)[1]
 
             out = classifier(embeddings)
-            loss = criterion(out, label_ids)
+            loss = criterion(out.view(-1), label_ids.view(-1))
 
             loss.backward()
             global_step += 1
@@ -259,10 +244,18 @@ if __name__ == '__main__':
 
         classifier.to(device)
         encoder.to(device)
-        classifier.load_state_dict(torch.load(classifier_path, map_location=device))
-        encoder.load_state_dict(torch.load(encoder_path, map_location=device))
 
-        if torch.cuda.device_count() > 1 and device.type == "cuda" and len(device_ids) > 1:
+        if unique_classifier_path:
+            classifier.load_state_dict(torch.load(unique_classifier_path, map_location=device))
+        else:
+            classifier.load_state_dict(torch.load(repo_path + "/models/classifier_" + model_path, map_location=device))
+
+        if unique_encoder_path:
+            encoder.load_state_dict(torch.load(unique_encoder_path, map_location=device))
+        else:
+            encoder.load_state_dict(torch.load(repo_path + "/models/encoder_" + model_path, map_location=device))
+
+        if torch.cuda.device_count() > 1 and device.type == "cuda":
             encoder = torch.nn.DataParallel(encoder, device_ids=device_ids)
 
     encoder.eval()
@@ -270,21 +263,29 @@ if __name__ == '__main__':
 
     if predict:
         test_examples = get_examples(test_filename, with_label=False)
-        test_dataset = TransformersData(test_examples, label_to_idx, tokenizer, max_seq_length=max_seq_length, has_token_type_ids=has_token_type_ids, with_label=False)
+        test_dataset = TransformersData(test_examples, label_list, tokenizer, max_seq_length=max_seq_length, has_token_type_ids=has_token_type_ids, with_label=False)
         test_dataloader = DataLoader(dataset=test_dataset, batch_size=batch_size)
 
         all_preds = model_predict(encoder, classifier, test_dataloader)
         with open(test_filename, "r", encoding="utf-8") as f:
             test = [json.loads(line) for line in f.read().splitlines()]
+        # test = pd.read_json(test_filename, orient="records", lines=True)
+        # test = [{"ref_twt_id_str": a[0], "text": a[1], "user_id": a[2]} for a in test.values.tolist()]
 
         with open(repo_path + "/out.json", "w", encoding="utf-8") as g:
             for i, t in enumerate(test):
-                t["prediction"] = all_preds[i]
+                if return_confidence_value:
+                    t["continuous_prediction"] = all_preds[i]
+                    curr_pred = int(all_preds[i] >= 0.5)
+                else:
+                    curr_pred = all_preds[i]
+
+                t["prediction"] = curr_pred
                 g.write(json.dumps(t) + "\n")
 
     else:
         test_examples = get_examples(test_filename)
-        test_dataset = TransformersData(test_examples, label_to_idx, tokenizer, max_seq_length=max_seq_length, has_token_type_ids=has_token_type_ids)
+        test_dataset = TransformersData(test_examples, label_list, tokenizer, max_seq_length=max_seq_length, has_token_type_ids=has_token_type_ids)
         test_dataloader = DataLoader(dataset=test_dataset, batch_size=batch_size)
 
         result, test_loss = test_model(encoder, classifier, test_dataloader)
