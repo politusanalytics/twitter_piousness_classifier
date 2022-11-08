@@ -16,12 +16,13 @@ input_filename = sys.argv[1] # Should be json or json.gz file in json line forma
 output_filename = sys.argv[2]
 
 # MUST SET THESE VALUES
-pretrained_transformers_model = "xlm-roberta-base"
-max_seq_length = 512
-batch_size = 64
-idx_to_label = ["category1", "category2", "category3"]
-encoder_path = ""
-classifier_path = ""
+pretrained_transformers_model = "sentence-transformers/paraphrase-xlm-r-multilingual-v1"
+max_seq_length = 64
+batch_size = 512
+idx_to_label = ["0", "1"]
+repo_path = "/home/username/twitter_piousness_classifier"
+classifier_path = repo_path + "/models/best_models/20220528_classifier_sentence-transformers_paraphrase-xlm-r-multilingual-v1_44.pt"
+encoder_path = repo_path + "/models/best_models/20220528_encoder_sentence-transformers_paraphrase-xlm-r-multilingual-v1_44.pt"
 device = torch.device("cuda")
 
 # OPTIONS
